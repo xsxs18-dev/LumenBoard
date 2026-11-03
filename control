@@ -1,6 +1,6 @@
 Package: com.xsxs18.lumenboard
 Name: LumenBoard
-Version: 1.0.3
+Version: 1.1.0
 Architecture: iphoneos-arm64
 Description: Icon theme engine for iOS 17 - 26. Works with SnowBoard, Anemone and WinterBoard themes.
 Maintainer: xsxs18-dev

@@ -52,8 +52,35 @@ static inline NSString *LMJailbreakPath(NSString *path) {
 
 // Config.plist
 #define LMConfigEnabledThemes @"EnabledThemes" // theme folder names, first one wins
-#define LMConfigUseSystemIconShape @"UseSystemIconShape"
+#define LMConfigUseSystemIconShape @"UseSystemIconShape" // before 1.1.0, IconShape replaces it
+#define LMConfigIconShape @"IconShape" // one of LMIconShape*
+#define LMConfigIconEffects @"IconEffects" // underlays/overlays from themes (AnemoneEffects), on when missing
 #define LMConfigKeepIconsInDarkAndTinted @"KeepIconsInDarkAndTinted"
+
+// Icon shapes. Theme and iOS only change theme icons, the others change every app icon.
+#define LMIconShapeTheme @"theme" // theme icons as drawn
+#define LMIconShapeSystem @"system" // iOS mask
+#define LMIconShapeCircle @"circle"
+#define LMIconShapeRounded @"rounded"
+#define LMIconShapeSquare @"square"
+#define LMIconShapeTeardrop @"teardrop"
+#define LMIconShapeThemeMask @"mask" // AppIconMask png of an active theme
+
+static inline NSArray<NSString *> *LMIconShapes(void) {
+  return @[LMIconShapeTheme, LMIconShapeSystem, LMIconShapeCircle, LMIconShapeRounded, LMIconShapeSquare, LMIconShapeTeardrop, LMIconShapeThemeMask];
+}
+
+// IconShape from a config, also for configs written before 1.1.0
+static inline NSString *LMIconShapeFromConfig(NSDictionary *config) {
+  NSString *shape = config[LMConfigIconShape];
+  if ([shape isKindOfClass:[NSString class]] && [LMIconShapes() containsObject:shape]) return shape;
+  return [config[LMConfigUseSystemIconShape] boolValue] ? LMIconShapeSystem : LMIconShapeTheme;
+}
+
+static inline BOOL LMIconEffectsFromConfig(NSDictionary *config) {
+  NSNumber *effects = config[LMConfigIconEffects];
+  return [effects isKindOfClass:[NSNumber class]] ? effects.boolValue : YES;
+}
 
 // IconMap.plist
 #define LMMapVersion 2 // 2: icon paths are jailbreak paths
@@ -62,7 +89,12 @@ static inline NSString *LMJailbreakPath(NSString *path) {
 #define LMIconDark @"Dark"
 #define LMIconTinted @"Tinted"
 #define LMIconToken @"Token" // changes whenever the icon or the settings change
+#define LMIconSystemShape @"SystemShape" // YES: iOS applies its mask. Missing in maps before 1.1.0, then the map's UseSystemIconShape counts
+#define LMIconStock @"Stock" // the app's own icon with the shape/effects, not a theme icon
 #define LMMapAppliedConfig @"AppliedConfig"
+
+// icons with the shape and effects drawn in, made by SpringBoard on Apply
+#define LMComposedDirectory [LMDataDirectory stringByAppendingPathComponent:@"Composed"]
 
 // Status-<name>.plist: what the tweak did in SpringBoard, in iconservicesagent and on the last apply. Shown on the diagnostics page.
 #define LMStatusPath(name) [LMDataDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"Status-%@.plist", name]]

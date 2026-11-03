@@ -148,7 +148,11 @@ static NSString *LMDiagnosticsReport(void) {
     [report appendFormat:@"      theme: %@\n", LMFolderSummary(directory)];
     for (NSString *folder in @[@"IconBundles", @"Icons"]) [report appendFormat:@"      %@: %@\n", folder, LMFolderSummary([directory stringByAppendingPathComponent:folder])];
   }
-  [report appendFormat:@"  iOS icon shape: %@, keep in dark & tinted: %@\n", LMYesNo(config.useSystemIconShape), LMYesNo(config.keepIconsInDarkAndTinted)];
+  [report appendFormat:@"  icon shape: %@, icon effects: %@, keep in dark & tinted: %@\n", config.iconShape, LMYesNo(config.iconEffects), LMYesNo(config.keepIconsInDarkAndTinted)];
+  NSDictionary *effects = [LMThemeLibrary effectsInThemes:config.enabledThemes];
+  NSString *mask = [LMThemeLibrary iconMaskInThemes:config.enabledThemes];
+  [report appendFormat:@"  theme underlay: %@, overlay: %@, mask: %@\n", effects[LMEffectUnderlay] ? : @"-", effects[LMEffectOverlay] ? : @"-", mask ? : @"-"];
+  [report appendFormat:@"  On/Off Labels: %@\n", LMYesNo(UIAccessibilityIsOnOffSwitchLabelsEnabled())];
 
   // icon map
   struct stat info;
@@ -166,6 +170,7 @@ static NSString *LMDiagnosticsReport(void) {
   if (apply) {
     [report appendFormat:@"  %@, clear cache %@, map changed %@, %@ icons in map\n", LMDateString(apply[@"Date"]), LMYesNo([apply[@"ClearCache"] boolValue]), LMYesNo([apply[@"MapChanged"] boolValue]), apply[@"MapIcons"] ? : @"-"];
     [report appendFormat:@"  pre-rendered %@ of %@ apps (%@ sizes), respring: %@\n", apply[@"Prerendered"] ? : @"-", apply[@"AppsToRender"] ? : @"-", apply[@"Descriptors"] ? : @"-", apply[@"Respring"] ? : @"-"];
+    if (apply[@"Shape"]) [report appendFormat:@"  shape %@, composed icons: %@\n", apply[@"Shape"], apply[@"Composed"] ? : @"none"];
   } else {
     [report appendString:@"  none\n"];
   }

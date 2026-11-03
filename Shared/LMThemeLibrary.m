@@ -163,6 +163,86 @@ static NSMutableDictionary *LMReadErrors; // "<theme>/<folder>" -> why it couldn
   return resolved;
 }
 
+// file name without .png and "@2x"/"@3x" (lowercased), nil if it's no png
+static NSString *LMPNGBaseName(NSString *file, NSInteger *scale) {
+  NSString *name = file.lowercaseString;
+  if (![name.pathExtension isEqualToString:@"png"]) return nil;
+  name = name.stringByDeletingPathExtension;
+  *scale = 1;
+  for (NSString *suffix in @[@"@2x", @"@3x"]) {
+    if (name.length > suffix.length && [name hasSuffix:suffix]) {
+      *scale = [suffix characterAtIndex:1] - '0';
+      name = [name substringToIndex:name.length - suffix.length];
+    }
+  }
+  return name;
+}
+
++ (NSDictionary<NSString *, NSString *> *)effectsInThemes:(NSArray<NSString *> *)themes {
+  // the iPhone files are better than nothing on an iPad
+  NSArray *devices = LMDeviceIsPad() ? @[@"ipad", @"iphone"] : @[@"iphone"];
+  // "UnderlaySpringBoard" is the home screen underlay, Anemone uses it over "Underlay" there
+  NSDictionary *kinds = @{ @"underlayspringboard" : @[LMEffectUnderlay, @1], @"underlay" : @[LMEffectUnderlay, @0], @"overlay" : @[LMEffectOverlay, @0] };
+  NSMutableDictionary *effects = [NSMutableDictionary new];
+  for (NSString *theme in themes) {
+    if (![theme isKindOfClass:[NSString class]] || !theme.length) continue;
+    NSString *directory = LMThemeSubfolder([LMThemesDirectory stringByAppendingPathComponent:theme], @"AnemoneEffects");
+    if (!directory) continue;
+    NSMutableDictionary *found = [NSMutableDictionary new], *ranks = [NSMutableDictionary new];
+    for (NSString *file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:nil]) {
+      NSInteger scale;
+      NSString *name = LMPNGBaseName(file, &scale);
+      for (NSUInteger index = 0; name && index < devices.count; index++) {
+        if (![name hasPrefix:devices[index]]) continue;
+        NSArray *kind = kinds[[name substringFromIndex:[devices[index] length]]];
+        if (!kind) break;
+        NSInteger rank = (NSInteger)(devices.count - index) * 100 + [kind[1] integerValue] * 10 + scale;
+        if ([ranks[kind[0]] integerValue] < rank) {
+          ranks[kind[0]] = @(rank);
+          found[kind[0]] = [directory stringByAppendingPathComponent:file];
+        }
+        break;
+      }
+    }
+    [found enumerateKeysAndObjectsUsingBlock:^(NSString *kind, NSString *path, BOOL *stop) {
+      if (!effects[kind]) effects[kind] = path;
+    }];
+  }
+  return effects;
+}
+
++ (NSString *)iconMaskInThemes:(NSArray<NSString *> *)themes {
+  BOOL pad = LMDeviceIsPad();
+  for (NSString *theme in themes) {
+    if (![theme isKindOfClass:[NSString class]] || !theme.length) continue;
+    NSString *bundles = LMThemeSubfolder([LMThemesDirectory stringByAppendingPathComponent:theme], @"Bundles");
+    NSString *directory = bundles ? LMThemeSubfolder(bundles, @"com.apple.mobileicons.framework") : nil;
+    if (!directory) continue;
+    NSString *best = nil;
+    NSInteger bestRank = 0;
+    for (NSString *file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:nil]) {
+      NSString *name = file.lowercaseString;
+      if (![name.pathExtension isEqualToString:@"png"]) continue;
+      name = name.stringByDeletingPathExtension;
+      // AppIconMask@2x~iphone: device after the scale
+      NSInteger device = 1;
+      if ([name hasSuffix:@"~iphone"]) device = pad ? 0 : 2;
+      else if ([name hasSuffix:@"~ipad"]) device = pad ? 2 : 0;
+      if (device != 1) name = [name substringToIndex:[name rangeOfString:@"~" options:NSBackwardsSearch].location];
+      NSInteger scale;
+      name = LMPNGBaseName([name stringByAppendingPathExtension:@"png"], &scale);
+      if (![name isEqualToString:@"appiconmask"]) continue;
+      NSInteger rank = device * 10 + scale;
+      if (rank > bestRank) {
+        bestRank = rank;
+        best = [directory stringByAppendingPathComponent:file];
+      }
+    }
+    if (best) return best;
+  }
+  return nil;
+}
+
 + (NSString *)readErrorForTheme:(NSString *)theme {
   if (!theme.length) return nil;
   os_unfair_lock_lock(&LMLibraryLock);

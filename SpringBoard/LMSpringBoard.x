@@ -1,6 +1,7 @@
 // SpringBoard: builds IconMap.plist from Config.plist and handles Apply (pre-render icons, respring)
 
 #import "../Shared/LMThemeLibrary.h"
+#import "LMIconComposer.h"
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <notify.h>
@@ -14,6 +15,8 @@
 @interface LSApplicationProxy : NSObject
 - (NSString *)applicationIdentifier;
 - (NSString *)localizedName;
+- (NSURL *)bundleURL;
+- (NSArray<NSString *> *)appTags;
 @end
 
 @interface LSApplicationWorkspace : NSObject
@@ -86,10 +89,14 @@ static void LMReloadStoreInThisProcess(void) {
 
 #pragma mark - Icon map
 
+static NSArray<LSApplicationProxy *> *LMInstalledApps(void) {
+  return [[objc_getClass("LSApplicationWorkspace") defaultWorkspace] allInstalledApplications] ? : @[];
+}
+
 // app name -> bundle ids, for Icons/<App Name>.png
-static NSDictionary *LMInstalledAppNames(void) {
+static NSDictionary *LMInstalledAppNames(NSArray<LSApplicationProxy *> *apps) {
   NSMutableDictionary *names = [NSMutableDictionary new];
-  for (LSApplicationProxy *app in [[objc_getClass("LSApplicationWorkspace") defaultWorkspace] allInstalledApplications]) {
+  for (LSApplicationProxy *app in apps) {
     NSString *name = app.localizedName.lowercaseString, *bundleID = app.applicationIdentifier.lowercaseString;
     if (!name.length || !bundleID.length) continue;
     NSMutableArray *bundleIDs = names[name] ? : (names[name] = [NSMutableArray new]);
@@ -98,22 +105,170 @@ static NSDictionary *LMInstalledAppNames(void) {
   return names;
 }
 
-// YES if the map changed
-static BOOL LMWriteIconMap(void) {
+// apps with a home screen icon
+static BOOL LMAppIsVisible(LSApplicationProxy *app) {
+  if (!app.applicationIdentifier.length) return NO;
+  NSArray *tags = [app respondsToSelector:@selector(appTags)] ? app.appTags : nil;
+  return ![tags isKindOfClass:[NSArray class]] || ![tags containsObject:@"hidden"];
+}
+
+// progress for the app: notify state = (done << 32) | total
+static void LMReportProgress(uint32_t done, uint32_t total) {
+  static int token;
+  static BOOL registered;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    registered = notify_register_check(LMNotifyProgress, &token) == NOTIFY_STATUS_OK;
+  });
+  if (!registered) return;
+  notify_set_state(token, ((uint64_t)done << 32) | total);
+  notify_post(LMNotifyProgress);
+}
+
+typedef CGImageRef (*LMStockIconFunction)(NSString *bundleIdentifier, CGFloat points, CGFloat scale, BOOL masked);
+
+// Draws the icon shape and effects into the icons of the installed apps: theme icons from their png, the other apps from their own icon.
+// composeMissing NO (SpringBoard launch, has to be quick): only what's made already, else the last icon from the previous map.
+static void LMComposeIcons(NSMutableDictionary<NSString *, NSDictionary *> *icons, LMIconComposer *composer, NSArray<LSApplicationProxy *> *apps,
+                           NSDictionary *previousIcons, BOOL composeMissing, NSMutableDictionary *status) {
+  [[NSFileManager defaultManager] createDirectoryAtPath:LMComposedDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+  chmod(LMComposedDirectory.fileSystemRepresentation, 0755);
+  NSString *(^composedPath)(NSString *) = ^NSString *(NSString *material) {
+    return [LMComposedDirectory stringByAppendingPathComponent:[LMHash([composer.signature stringByAppendingFormat:@"\n%@", material]) stringByAppendingPathExtension:@"png"]];
+  };
+  // a previous map's icon for the app and slot, if it's still there
+  NSString *(^previousPath)(NSString *, NSString *, BOOL) = ^NSString *(NSString *bundleID, NSString *slot, BOOL stock) {
+    NSDictionary *previous = previousIcons[bundleID];
+    NSString *path = [previous isKindOfClass:[NSDictionary class]] && [previous[slot] isKindOfClass:[NSString class]] ? LMRootPath(previous[slot]) : nil;
+    BOOL composedBefore = [path.stringByDeletingLastPathComponent isEqualToString:LMComposedDirectory];
+    return (composedBefore && [previous[LMIconStock] boolValue] == stock && access(path.fileSystemRepresentation, R_OK) == 0) ? path : nil;
+  };
+  NSUInteger made = 0, reused = 0, failed = 0, pending = 0;
+
+  // only apps with a home screen icon, themes have icons for thousands of apps
+  NSMutableArray<LSApplicationProxy *> *visibleApps = [NSMutableArray new];
+  NSMutableSet *visibleIDs = [NSMutableSet new];
+  for (LSApplicationProxy *app in apps) {
+    if (!LMAppIsVisible(app)) continue;
+    [visibleApps addObject:app];
+    [visibleIDs addObject:app.applicationIdentifier.lowercaseString];
+  }
+  NSMutableArray<LSApplicationProxy *> *stockApps = [NSMutableArray new];
+  for (LSApplicationProxy *app in visibleApps) if (!icons[app.applicationIdentifier.lowercaseString]) [stockApps addObject:app];
+  uint32_t done = 0, total = (uint32_t)(visibleIDs.count);
+  if (composeMissing) LMReportProgress(0, total);
+
+  // theme icons
+  NSMutableDictionary *composed = [NSMutableDictionary new];
+  for (NSString *bundleID in icons) {
+    NSDictionary *icon = icons[bundleID];
+    // not installed (or hidden): the plain theme icon, made on the next Apply after it's installed
+    if (![visibleIDs containsObject:bundleID]) {
+      composed[bundleID] = icon;
+      continue;
+    }
+    @autoreleasepool {
+      NSMutableDictionary *entry = [NSMutableDictionary new];
+      for (NSString *slot in @[LMIconLight, LMIconDark, LMIconTinted]) {
+        if (!icon[slot]) continue;
+        // dark and tinted artwork gets the shape, the underlay/overlay are drawn for the normal look
+        BOOL effects = [slot isEqualToString:LMIconLight];
+        NSString *path = composedPath([NSString stringWithFormat:@"theme %@ %@ %@ effects=%d", slot, icon[slot], LMFileStamp(icon[slot]), effects]);
+        if (access(path.fileSystemRepresentation, R_OK) == 0) {
+          reused++;
+        } else if (composeMissing) {
+          if ([composer writeIconWithArtworkAtPath:icon[slot] effects:effects toPath:path]) made++;
+          else {
+            failed++;
+            path = icon[slot];
+          }
+        } else {
+          pending++;
+          path = previousPath(bundleID, slot, NO) ? : icon[slot];
+        }
+        entry[slot] = path;
+      }
+      composed[bundleID] = entry;
+    }
+    if (composeMissing) LMReportProgress(++done, total);
+  }
+
+  // the other apps
+  LMStockIconFunction stockIcon = (LMStockIconFunction)dlsym(RTLD_DEFAULT, "LMCoreCopyStockIconImage");
+  // keeps the iOS shape for "Theme's own shape", with "iOS shape" IconServices masks the finished icon
+  BOOL masked = [composer.shape isEqualToString:LMIconShapeTheme];
+  CGFloat scale = 3;
+  CGFloat points = composer.pixelSize / scale;
+  for (LSApplicationProxy *app in stockApps) {
+    @autoreleasepool {
+      NSString *bundleID = app.applicationIdentifier.lowercaseString;
+      // the app's icon changes with updates, its Info.plist does too
+      NSString *infoPlist = app.bundleURL.path ? [app.bundleURL.path stringByAppendingPathComponent:@"Info.plist"] : nil;
+      NSString *path = composedPath([NSString stringWithFormat:@"stock %@ %@ masked=%d", bundleID, LMFileStamp(infoPlist), masked]);
+      if (access(path.fileSystemRepresentation, R_OK) == 0) {
+        reused++;
+      } else if (composeMissing) {
+        CGImageRef artwork = stockIcon ? stockIcon(app.applicationIdentifier, points, scale, masked) : NULL;
+        BOOL written = artwork && [composer writeIconWithArtwork:artwork effects:YES toPath:path];
+        CGImageRelease(artwork);
+        if (written) made++;
+        else {
+          failed++;
+          path = nil;
+        }
+      } else {
+        pending++;
+        path = previousPath(bundleID, LMIconLight, YES);
+      }
+      if (path) composed[bundleID] = @{ LMIconLight : path, LMIconStock : @YES };
+    }
+    if (composeMissing) LMReportProgress(++done, total);
+  }
+
+  [icons setDictionary:composed];
+  status[@"Composed"] = [NSString stringWithFormat:@"%lu new, %lu reused, %lu failed, %lu waiting for Apply%@", (unsigned long)made, (unsigned long)reused,
+                         (unsigned long)failed, (unsigned long)pending, (composeMissing && !stockIcon && stockApps.count) ? @", LumenBoardCore not loaded in SpringBoard" : @""];
+}
+
+// composed pngs the map doesn't use anymore
+static void LMRemoveUnusedComposedIcons(NSDictionary *entries) {
+  NSMutableSet *used = [NSMutableSet new];
+  for (NSDictionary *entry in entries.allValues)
+    for (NSString *slot in @[LMIconLight, LMIconDark, LMIconTinted])
+      if ([entry[slot] isKindOfClass:[NSString class]]) [used addObject:[entry[slot] lastPathComponent]];
+  for (NSString *file in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:LMComposedDirectory error:nil])
+    if (![used containsObject:file]) [[NSFileManager defaultManager] removeItemAtPath:[LMComposedDirectory stringByAppendingPathComponent:file] error:nil];
+}
+
+// YES if the map changed. composeIcons: draw the shape/effects into icons that don't have them yet (slow, Apply only).
+static BOOL LMWriteIconMap(BOOL composeIcons, NSMutableDictionary *status) {
   NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:LMConfigPath] ? : @{};
   NSArray *themes = [config[LMConfigEnabledThemes] isKindOfClass:[NSArray class]] ? config[LMConfigEnabledThemes] : @[];
-  BOOL systemShape = [config[LMConfigUseSystemIconShape] boolValue];
+  NSString *shape = LMIconShapeFromConfig(config);
+  BOOL iconEffects = LMIconEffectsFromConfig(config);
   BOOL keepAppearance = [config[LMConfigKeepIconsInDarkAndTinted] boolValue];
 
   [LMThemeLibrary invalidate];
+  NSArray<LSApplicationProxy *> *apps = LMInstalledApps();
   BOOL usesAppNames = NO;
   for (NSString *theme in themes) usesAppNames = usesAppNames || ([theme isKindOfClass:[NSString class]] && [LMThemeLibrary iconsByAppNameInTheme:theme].count);
-  NSDictionary *icons = [LMThemeLibrary resolvedIconsForThemes:themes appNames:(usesAppNames ? LMInstalledAppNames() : nil)];
+  NSMutableDictionary *icons = [[LMThemeLibrary resolvedIconsForThemes:themes appNames:(usesAppNames ? LMInstalledAppNames(apps) : nil)] mutableCopy];
 
-  NSDictionary *appliedConfig = @{ LMConfigEnabledThemes : themes, LMConfigUseSystemIconShape : @(systemShape), LMConfigKeepIconsInDarkAndTinted : @(keepAppearance) };
+  NSDictionary *appliedConfig = @{ LMConfigEnabledThemes : themes, LMConfigIconShape : shape, LMConfigIconEffects : @(iconEffects), LMConfigKeepIconsInDarkAndTinted : @(keepAppearance) };
+
+  LMIconComposer *composer = [[LMIconComposer alloc] initWithShape:shape maskPath:[LMThemeLibrary iconMaskInThemes:themes]
+                                                            effects:(iconEffects ? [LMThemeLibrary effectsInThemes:themes] : @{})];
+  BOOL systemShape = [composer.shape isEqualToString:LMIconShapeSystem];
+  NSDictionary *previous = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath];
+  if (composer.changesIcons) {
+    NSDictionary *previousIcons = [previous[LMMapIcons] isKindOfClass:[NSDictionary class]] ? previous[LMMapIcons] : @{};
+    LMComposeIcons(icons, composer, apps, previousIcons, composeIcons, status);
+  }
+  status[@"Shape"] = composer.shape;
+  status[@"Effects"] = composer.changesIcons ? composer.signature : @"none";
 
   // hash everything that changes how an icon looks. Paths are saved as jailbreak paths (roothide renames the jbroot).
-  NSString *style = [NSString stringWithFormat:@"v%d shape=%d keep=%d", LMMapVersion, systemShape, keepAppearance];
+  NSString *style = [NSString stringWithFormat:@"v%d shape=%@ keep=%d effects=%d", LMMapVersion, composer.shape, keepAppearance, composer.changesIcons];
   NSMutableDictionary *entries = [NSMutableDictionary new], *materials = [NSMutableDictionary new];
   NSMutableString *content = [NSMutableString stringWithFormat:@"%@\n%@\n", style, [themes componentsJoinedByString:@"/"]];
   for (NSString *bundleID in [icons.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
@@ -124,14 +279,16 @@ static BOOL LMWriteIconMap(void) {
       if (icon[slot]) entry[slot] = LMJailbreakPath(icon[slot]);
       [material appendFormat:@"|%@@%@", entry[slot] ? : @"", LMFileStamp(icon[slot])];
     }
+    entry[LMIconSystemShape] = @(systemShape);
+    if ([icon[LMIconStock] boolValue]) entry[LMIconStock] = @YES;
     [material appendFormat:@"|%@", style];
     entries[bundleID] = entry;
     materials[bundleID] = material;
     [content appendFormat:@"%@\n", material];
   }
   NSString *contentHash = LMHash(content);
+  if (!composer.changesIcons) [[NSFileManager defaultManager] removeItemAtPath:LMComposedDirectory error:nil];
 
-  NSDictionary *previous = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath];
   if ([previous[@"Version"] integerValue] == LMMapVersion && [previous[@"ContentHash"] isEqual:contentHash]) return NO;
 
   // new generation on every change, so tokens (icon cache keys) are never reused
@@ -156,23 +313,11 @@ static BOOL LMWriteIconMap(void) {
     return NO;
   }
   chmod(LMIconMapPath.fileSystemRepresentation, 0644);
+  if (composer.changesIcons) LMRemoveUnusedComposedIcons(entries);
   return YES;
 }
 
 #pragma mark - Apply
-
-// progress for the app: notify state = (done << 32) | total
-static void LMReportProgress(uint32_t done, uint32_t total) {
-  static int token;
-  static BOOL registered;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    registered = notify_register_check(LMNotifyProgress, &token) == NOTIFY_STATUS_OK;
-  });
-  if (!registered) return;
-  notify_set_state(token, ((uint64_t)done << 32) | total);
-  notify_post(LMNotifyProgress);
-}
 
 static void LMClearSystemIconCache(void) {
   for (NSString *path in @[
@@ -180,6 +325,8 @@ static void LMClearSystemIconCache(void) {
     @"/var/mobile/Library/Caches/com.apple.IconsCache",
     @"/var/mobile/Library/Caches/MappedImageCache/Persistent"
   ]) [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+  // our icons with the shape/effects are made again too
+  [[NSFileManager defaultManager] removeItemAtPath:LMComposedDirectory error:nil];
 }
 
 // the descriptors SpringBoard uses for home screen icons, main thread only
@@ -208,7 +355,7 @@ static NSArray *LMHomeScreenDescriptors(void) {
 // apps whose icon changed, nil maps = all apps
 static NSArray<NSString *> *LMAppsToRender(NSDictionary *before, NSDictionary *after) {
   NSMutableArray *bundleIDs = [NSMutableArray new];
-  for (LSApplicationProxy *app in [[objc_getClass("LSApplicationWorkspace") defaultWorkspace] allInstalledApplications]) {
+  for (LSApplicationProxy *app in LMInstalledApps()) {
     NSString *bundleID = app.applicationIdentifier;
     NSString *key = bundleID.lowercaseString;
     if (!key.length) continue;
@@ -282,21 +429,21 @@ static void LMApply(BOOL clearCache) {
   if (applying) return;
   applying = YES;
 
-  NSDictionary *before = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath][LMMapIcons] ? : @{};
-  if (clearCache) LMClearSystemIconCache();
-  BOOL mapChanged = LMWriteIconMap();
-  // reload here now, the other processes get the notification
-  LMReloadStoreInThisProcess();
-  notify_post(LMNotifyMapChanged);
   NSArray *descriptors = LMHomeScreenDescriptors();
   NSMutableDictionary *status = [@{
     @"Date" : [NSDate date],
     @"ClearCache" : @(clearCache),
-    @"MapChanged" : @(mapChanged),
     @"Descriptors" : @(descriptors.count),
   } mutableCopy];
 
+  // drawing the icon shape into every app icon takes a while, not on the main thread
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSDictionary *before = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath][LMMapIcons] ? : @{};
+    if (clearCache) LMClearSystemIconCache();
+    status[@"MapChanged"] = @(LMWriteIconMap(YES, status));
+    // reload here now, the other processes get the notification
+    LMReloadStoreInThisProcess();
+    notify_post(LMNotifyMapChanged);
     LMRestartIconAgent();
     usleep(300 * 1000);
     NSDictionary *after = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath][LMMapIcons] ? : @{};
@@ -324,7 +471,7 @@ static void LMApplyNotification(CFNotificationCenterRef center, void *observer, 
   @autoreleasepool {
     if (![[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){17, 0, 0}]) return;
     // themes might have been updated by the package manager
-    if (LMWriteIconMap()) {
+    if (LMWriteIconMap(NO, [NSMutableDictionary new])) {
       LMReloadStoreInThisProcess();
       LMRestartIconAgent();
       notify_post(LMNotifyMapChanged);

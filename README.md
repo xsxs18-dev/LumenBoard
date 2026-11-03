@@ -17,10 +17,12 @@
 - Icons are rendered before the respring, nothing pops in afterwards
 - Use several themes at once and drag them into the order you like
 - Theme icons keep their own shape, or use the iOS shape
+- Icon shapes for every app icon: circle, rounded square, square, teardrop or your theme's icon mask
+- Icon effects: underlays and overlays from your themes (Anemone effects)
 - Dark and tinted icons on iOS 18
 - Works on palera1n too: if iconservicesagent renders an icon without the theme, SpringBoard renders it itself
 - Diagnostics page in the settings with a report you can copy
-- App in English and German
+- App in English, German and Simplified Chinese
 
 ## Supported jailbreaks
 
@@ -46,8 +48,13 @@ MyTheme.theme/
 │   ├── com.apple.mobilesafari-large.png
 │   ├── com.apple.mobilesafari-dark.png     (optional)
 │   └── com.apple.mobilesafari-tinted.png   (optional)
-└── Icons/
-    └── Safari.png                          (by app name)
+├── Icons/
+│   └── Safari.png                          (by app name)
+├── AnemoneEffects/                         (optional, icon effects)
+│   ├── iPhoneUnderlay@3x.png
+│   └── iPhoneOverlay@3x.png
+└── Bundles/com.apple.mobileicons.framework/
+    └── AppIconMask@3x~iphone.png           (optional, for "Theme mask")
 ```
 
 ## Building

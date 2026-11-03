@@ -8,7 +8,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)sharedStore;
 // theme folder names, highest priority first
 @property (nonatomic, copy) NSArray<NSString *> *enabledThemes;
-@property (nonatomic) BOOL useSystemIconShape;
+// LMIconShape*
+@property (nonatomic, copy) NSString *iconShape;
+// underlays/overlays from the active themes
+@property (nonatomic) BOOL iconEffects;
 @property (nonatomic) BOOL keepIconsInDarkAndTinted;
 // changed since the last apply
 @property (nonatomic, readonly) BOOL hasUnappliedChanges;

@@ -1,14 +1,22 @@
 #import "LMSettingsViewController.h"
 #import "LMApplyViewController.h"
 #import "LMDiagnosticsViewController.h"
+#import "LMShapeViewController.h"
 #import "LMConfigStore.h"
 
 typedef NS_ENUM(NSInteger, LMSettingsSection) {
-  LMSettingsSectionIconStyle,
+  LMSettingsSectionIcons,
   LMSettingsSectionIconCache,
   LMSettingsSectionTroubleshooting,
   LMSettingsSectionAbout,
   LMSettingsSectionCount,
+};
+
+typedef NS_ENUM(NSInteger, LMIconsRow) {
+  LMIconsRowShape,
+  LMIconsRowEffects,
+  LMIconsRowKeepAppearance,
+  LMIconsRowCount,
 };
 
 @implementation LMSettingsViewController
@@ -21,18 +29,36 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
   [super viewDidLoad];
   self.title = LMLocalized(@"Settings");
   self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onOffLabelsChanged) name:UIAccessibilityOnOffSwitchLabelsDidChangeNotification object:nil];
+}
+
+- (void)onOffLabelsChanged {
+  [self.tableView reloadData];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
   [super viewWillAppear:animated];
   [self.navigationController setToolbarHidden:YES animated:animated];
+  // the shape may have changed on the shape page
+  [self.tableView reloadData];
 }
 
-- (UISwitch *)switchWithValue:(BOOL)value action:(SEL)action {
+// With "On/Off Labels" (Settings > Accessibility) UISwitch draws its I/O labels through CoreImage, which crashes in
+// this process on some devices (CIContext falls back to OpenGL). The rows get a checkmark instead then.
+static BOOL LMUseCheckmarksForToggles(void) {
+  return UIAccessibilityIsOnOffSwitchLabelsEnabled();
+}
+
+- (void)setToggleInCell:(UITableViewCell *)cell value:(BOOL)value action:(SEL)action {
+  if (LMUseCheckmarksForToggles()) {
+    cell.accessoryType = value ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    return;
+  }
   UISwitch *toggle = [UISwitch new];
   toggle.on = value;
   [toggle addTarget:self action:action forControlEvents:UIControlEventValueChanged];
-  return toggle;
+  cell.accessoryView = toggle;
 }
 
 - (void)save {
@@ -43,14 +69,22 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
   [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)systemShapeChanged:(UISwitch *)toggle {
-  [LMConfigStore sharedStore].useSystemIconShape = toggle.on;
+- (void)setIconEffects:(BOOL)on {
+  [LMConfigStore sharedStore].iconEffects = on;
   [self save];
 }
 
-- (void)keepAppearanceChanged:(UISwitch *)toggle {
-  [LMConfigStore sharedStore].keepIconsInDarkAndTinted = toggle.on;
+- (void)setKeepAppearance:(BOOL)on {
+  [LMConfigStore sharedStore].keepIconsInDarkAndTinted = on;
   [self save];
+}
+
+- (void)iconEffectsChanged:(UISwitch *)toggle {
+  [self setIconEffects:toggle.on];
+}
+
+- (void)keepAppearanceChanged:(UISwitch *)toggle {
+  [self setKeepAppearance:toggle.on];
 }
 
 - (void)confirmClearIconCache {
@@ -71,7 +105,7 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
   switch (section) {
-    case LMSettingsSectionIconStyle: return 2;
+    case LMSettingsSectionIcons: return LMIconsRowCount;
     case LMSettingsSectionIconCache: return 1;
     case LMSettingsSectionTroubleshooting: return 1;
     case LMSettingsSectionAbout: return 2;
@@ -81,7 +115,7 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
   switch (section) {
-    case LMSettingsSectionIconStyle: return LMLocalized(@"Theme icons");
+    case LMSettingsSectionIcons: return LMLocalized(@"Icons");
     case LMSettingsSectionIconCache: return LMLocalized(@"Icon cache");
     case LMSettingsSectionTroubleshooting: return LMLocalized(@"Troubleshooting");
     case LMSettingsSectionAbout: return LMLocalized(@"About");
@@ -91,7 +125,7 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
   switch (section) {
-    case LMSettingsSectionIconStyle: return LMLocalized(@"Theme icons keep their own shape unless \"iOS icon shape\" is on. Tap Apply afterwards.");
+    case LMSettingsSectionIcons: return LMLocalized(@"Icon effects are the underlays and overlays some themes bring along (Anemone effects). Shape and effects are drawn into every app icon. Tap Apply afterwards.");
     case LMSettingsSectionIconCache: return LMLocalized(@"Renders every app icon again. Use it if icons still look wrong after installing or updating themes.");
     case LMSettingsSectionTroubleshooting: return LMLocalized(@"Shows what LumenBoard did in SpringBoard and iconservicesagent. Copy the report if your icons don't change.");
   }
@@ -104,14 +138,21 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
   LMConfigStore *config = [LMConfigStore sharedStore];
   cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
-  if (indexPath.section == LMSettingsSectionIconStyle && indexPath.row == 0) {
-    content.text = LMLocalized(@"iOS icon shape");
+  if (indexPath.section == LMSettingsSectionIcons && indexPath.row == LMIconsRowShape) {
+    content = [UIListContentConfiguration valueCellConfiguration];
+    content.text = LMLocalized(@"Icon shape");
+    content.secondaryText = [LMShapeViewController nameForShape:config.iconShape];
     content.image = [UIImage systemImageNamed:@"app"];
-    cell.accessoryView = [self switchWithValue:config.useSystemIconShape action:@selector(systemShapeChanged:)];
-  } else if (indexPath.section == LMSettingsSectionIconStyle) {
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+  } else if (indexPath.section == LMSettingsSectionIcons && indexPath.row == LMIconsRowEffects) {
+    content.text = LMLocalized(@"Icon effects");
+    content.image = [UIImage systemImageNamed:@"square.3.layers.3d"];
+    [self setToggleInCell:cell value:config.iconEffects action:@selector(iconEffectsChanged:)];
+  } else if (indexPath.section == LMSettingsSectionIcons) {
     content.text = LMLocalized(@"Keep in dark & tinted mode");
     content.image = [UIImage systemImageNamed:@"circle.lefthalf.filled"];
-    cell.accessoryView = [self switchWithValue:config.keepIconsInDarkAndTinted action:@selector(keepAppearanceChanged:)];
+    [self setToggleInCell:cell value:config.keepIconsInDarkAndTinted action:@selector(keepAppearanceChanged:)];
   } else if (indexPath.section == LMSettingsSectionIconCache) {
     content.text = LMLocalized(@"Clear icon cache & respring");
     content.textProperties.color = self.view.tintColor;
@@ -138,8 +179,28 @@ typedef NS_ENUM(NSInteger, LMSettingsSection) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
   [tableView deselectRowAtIndexPath:indexPath animated:YES];
-  if (indexPath.section == LMSettingsSectionIconCache) [self confirmClearIconCache];
-  else if (indexPath.section == LMSettingsSectionTroubleshooting) [self.navigationController pushViewController:[LMDiagnosticsViewController new] animated:YES];
+  LMConfigStore *config = [LMConfigStore sharedStore];
+  if (indexPath.section == LMSettingsSectionIcons) {
+    switch (indexPath.row) {
+      case LMIconsRowShape:
+        [self.navigationController pushViewController:[LMShapeViewController new] animated:YES];
+        return;
+      // only selectable when the toggles are checkmarks
+      case LMIconsRowEffects:
+        if (!LMUseCheckmarksForToggles()) return;
+        [self setIconEffects:!config.iconEffects];
+        break;
+      case LMIconsRowKeepAppearance:
+        if (!LMUseCheckmarksForToggles()) return;
+        [self setKeepAppearance:!config.keepIconsInDarkAndTinted];
+        break;
+    }
+    [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+  } else if (indexPath.section == LMSettingsSectionIconCache) {
+    [self confirmClearIconCache];
+  } else if (indexPath.section == LMSettingsSectionTroubleshooting) {
+    [self.navigationController pushViewController:[LMDiagnosticsViewController new] animated:YES];
+  }
 }
 
 @end

@@ -19,21 +19,41 @@
     NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:LMConfigPath] ? : @{};
     NSArray *themes = config[LMConfigEnabledThemes];
     _enabledThemes = [themes isKindOfClass:[NSArray class]] ? [themes copy] : @[];
-    _useSystemIconShape = [config[LMConfigUseSystemIconShape] boolValue];
+    _iconShape = LMIconShapeFromConfig(config);
+    _iconEffects = LMIconEffectsFromConfig(config);
     _keepIconsInDarkAndTinted = [config[LMConfigKeepIconsInDarkAndTinted] boolValue];
     // what SpringBoard last applied, so the app knows about pending changes even after a restart
     NSDictionary *applied = [NSDictionary dictionaryWithContentsOfFile:LMIconMapPath][LMMapAppliedConfig];
-    _appliedConfig = [applied isKindOfClass:[NSDictionary class]] ? applied : [self dictionaryRepresentation];
+    // maps before 1.1.0 have UseSystemIconShape instead of IconShape and no IconEffects
+    _appliedConfig = [applied isKindOfClass:[NSDictionary class]] ? [self normalizedConfig:applied] : [self dictionaryRepresentation];
   }
   return self;
+}
+
+- (NSDictionary *)normalizedConfig:(NSDictionary *)config {
+  NSArray *themes = [config[LMConfigEnabledThemes] isKindOfClass:[NSArray class]] ? config[LMConfigEnabledThemes] : @[];
+  return @{
+    LMConfigEnabledThemes : themes,
+    LMConfigIconShape : LMIconShapeFromConfig(config),
+    LMConfigIconEffects : @(LMIconEffectsFromConfig(config)),
+    LMConfigKeepIconsInDarkAndTinted : @([config[LMConfigKeepIconsInDarkAndTinted] boolValue])
+  };
 }
 
 - (NSDictionary *)dictionaryRepresentation {
   return @{
     LMConfigEnabledThemes : _enabledThemes ? : @[],
-    LMConfigUseSystemIconShape : @(_useSystemIconShape),
+    LMConfigIconShape : _iconShape ? : LMIconShapeTheme,
+    LMConfigIconEffects : @(_iconEffects),
     LMConfigKeepIconsInDarkAndTinted : @(_keepIconsInDarkAndTinted)
   };
+}
+
+- (NSDictionary *)savedRepresentation {
+  NSMutableDictionary *config = [[self dictionaryRepresentation] mutableCopy];
+  // for LumenBoard versions before 1.1.0 (after a downgrade)
+  config[LMConfigUseSystemIconShape] = @([_iconShape isEqualToString:LMIconShapeSystem]);
+  return config;
 }
 
 - (BOOL)hasUnappliedChanges {
@@ -42,7 +62,7 @@
 
 - (BOOL)save:(NSError **)error {
   if (![[NSFileManager defaultManager] createDirectoryAtPath:LMDataDirectory withIntermediateDirectories:YES attributes:nil error:error]) return NO;
-  NSData *data = [NSPropertyListSerialization dataWithPropertyList:[self dictionaryRepresentation] format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
+  NSData *data = [NSPropertyListSerialization dataWithPropertyList:[self savedRepresentation] format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
   if (!data || ![data writeToFile:LMConfigPath options:NSDataWritingAtomic error:error]) return NO;
   chmod(LMConfigPath.fileSystemRepresentation, 0644);
   return YES;

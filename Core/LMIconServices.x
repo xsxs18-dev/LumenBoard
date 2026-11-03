@@ -42,6 +42,12 @@
 @interface IFImage : NSObject
 - (instancetype)initWithCGImage:(CGImageRef)image scale:(double)scale;
 - (NSData *)validationToken;
+- (CGImageRef)CGImage;
+@end
+
+@interface ISImageDescriptor : NSObject
+- (instancetype)initWithSize:(CGSize)size scale:(double)scale;
+- (void)setShouldApplyMask:(BOOL)shouldApplyMask;
 @end
 
 @interface ISGenerationRequest : NSObject
@@ -74,6 +80,8 @@ static char LMIconEntryKey;
 static char LMThemedIconKey;
 // cleared once iconservicesagent hands back a theme icon without the theme, reset when the map changes
 static atomic_bool LMAgentRendersThemes = true;
+// LMCoreCopyStockIconImage is rendering on this thread: no themed digests, no theme providers
+static __thread BOOL LMRenderingStock;
 
 #pragma mark - Digests
 
@@ -95,7 +103,7 @@ static NSUUID *LMThemedDigest(NSUUID *stockDigest, NSString *token) {
 }
 
 static void LMMarkThemed(ISConcreteIcon *icon, NSString *bundleIdentifier) {
-  if (!icon) return;
+  if (!icon || LMRenderingStock) return;
   NSDictionary *entry = [[LMIconStore sharedStore] iconForBundleIdentifier:bundleIdentifier];
   if (!entry) return;
   id stockDigest = object_getIvar(icon, LMDigestIvar);
@@ -207,15 +215,18 @@ static ISResourceProvider *LMMakeProvider(NSDictionary *entry) {
   if ([provider respondsToSelector:@selector(setResourceType:)]) [provider setResourceType:1];
   if ([provider respondsToSelector:@selector(setAllowNonDefaultAppearances:)]) [provider setAllowNonDefaultAppearances:!store.keepsIconsInDarkAndTinted];
   if ([provider respondsToSelector:@selector(setAllowAlterationsToResourceArt:)]) [provider setAllowAlterationsToResourceArt:YES];
+  // icons with a custom shape have it drawn in already. Maps before 1.1.0 have one setting for all icons.
+  NSNumber *systemShape = [entry[LMIconSystemShape] isKindOfClass:[NSNumber class]] ? entry[LMIconSystemShape] : nil;
+  BOOL masked = systemShape ? systemShape.boolValue : store.usesSystemIconShape;
   // only used if the descriptor doesn't ask for a shape itself
-  if (!store.usesSystemIconShape && LMRecipeClass && [provider respondsToSelector:@selector(setSuggestedRecipe:)]) [provider setSuggestedRecipe:[LMRecipeClass new]];
+  if (!masked && LMRecipeClass && [provider respondsToSelector:@selector(setSuggestedRecipe:)]) [provider setSuggestedRecipe:[LMRecipeClass new]];
   LMStatusCount(LMCounterProvidersMade);
   return provider;
 }
 
 // only for requests with the themed digest, a process without the tweak wants the stock icon
 static ISResourceProvider *LMProviderForRequest(ISConcreteIcon *request, NSString *bundleIdentifier, ISConcreteIcon *(^themedTwin)(void)) {
-  if (!bundleIdentifier) return nil;
+  if (!bundleIdentifier || LMRenderingStock) return nil;
   // the requesting process may already use a newer map
   [[LMIconStore sharedStore] reloadIfMapChanged];
   NSDictionary *entry = [[LMIconStore sharedStore] iconForBundleIdentifier:bundleIdentifier];
@@ -256,16 +267,21 @@ static void LMAgentMissedTheme(id icon) {
   }
 }
 
-// what iconservicesagent does with a request, done here. The theme provider comes from the hooks below.
-static IFImage *LMRenderHere(ISConcreteIcon *icon, id descriptor) {
-  Class requestClass = objc_getClass("ISGenerationRequest");
-  if (!descriptor || ![requestClass instancesRespondToSelector:@selector(generateImage)]) return nil;
-  // iconservicesagent renders one request at a time, so do we
+// iconservicesagent renders one request at a time, so do we
+static NSLock *LMRenderLock(void) {
   static NSLock *lock;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     lock = [NSLock new];
   });
+  return lock;
+}
+
+// what iconservicesagent does with a request, done here. The theme provider comes from the hooks below.
+static IFImage *LMRenderHere(ISConcreteIcon *icon, id descriptor) {
+  Class requestClass = objc_getClass("ISGenerationRequest");
+  if (!descriptor || ![requestClass instancesRespondToSelector:@selector(generateImage)]) return nil;
+  NSLock *lock = LMRenderLock();
   IFImage *image = nil;
   [lock lock];
   @try {
@@ -284,6 +300,37 @@ static IFImage *LMRenderHere(ISConcreteIcon *icon, id descriptor) {
   LMStatusCount(LMCounterLocalFailed);
   if (LMStatusCounterValue(LMCounterLocalFailed) <= 5) LMStatusEvent(@"couldn't render %@ with the theme", LMThemedIconIdentifier(icon));
   return image;
+}
+
+// For SpringBoard (LumenBoardSpringBoard looks it up with dlsym): the app's own icon, without any theme,
+// so the icon shape and effects can be drawn into it. masked: with the iOS shape. NULL if it can't be rendered.
+__attribute__((visibility("default"))) CGImageRef LMCoreCopyStockIconImage(NSString *bundleIdentifier, CGFloat points, CGFloat scale, BOOL masked) {
+  Class iconClass = objc_getClass("ISBundleIdentifierIcon");
+  Class descriptorClass = objc_getClass("ISImageDescriptor");
+  Class requestClass = objc_getClass("ISGenerationRequest");
+  if (!bundleIdentifier.length || ![iconClass instancesRespondToSelector:@selector(initWithBundleIdentifier:)] || ![descriptorClass instancesRespondToSelector:@selector(initWithSize:scale:)] || ![requestClass instancesRespondToSelector:@selector(generateImage)]) return NULL;
+  CGImageRef result = NULL;
+  NSLock *lock = LMRenderLock();
+  [lock lock];
+  LMRenderingStock = YES;
+  @try {
+    @autoreleasepool {
+      ISConcreteIcon *icon = [[iconClass alloc] initWithBundleIdentifier:bundleIdentifier];
+      ISImageDescriptor *descriptor = [[descriptorClass alloc] initWithSize:CGSizeMake(points, points) scale:scale];
+      if ([descriptor respondsToSelector:@selector(setShouldApplyMask:)]) [descriptor setShouldApplyMask:masked];
+      ISGenerationRequest *request = [requestClass new];
+      [request setImageDescriptor:descriptor];
+      [request setIcon:icon];
+      IFImage *image = icon ? [request generateImage] : nil;
+      CGImageRef cgImage = [image respondsToSelector:@selector(CGImage)] ? [image CGImage] : NULL;
+      if (cgImage) result = CGImageRetain(cgImage);
+    }
+  } @catch (NSException *exception) {
+    LMStatusEvent(@"rendering the stock icon of %@ failed: %@", bundleIdentifier, exception.reason);
+  }
+  LMRenderingStock = NO;
+  [lock unlock];
+  return result;
 }
 
 static void LMMapDidChange(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
