@@ -16,6 +16,7 @@
 - Themes every app icon: home screen, dock, App Library, Spotlight, Settings, notifications
 - Icons are rendered before the respring, nothing pops in afterwards
 - Use several themes at once and drag them into the order you like
+- Optional Home Screen double tap to choose an app icon from any installed theme, use the original icon, or return to the theme order (Settings → Home Screen; off by default, so apps open immediately)
 - Theme icons keep their own shape, or use the iOS shape
 - Icon shapes for every app icon: circle, rounded square, square, teardrop or your theme's icon mask
 - Icon effects: underlays and overlays from your themes (Anemone effects)

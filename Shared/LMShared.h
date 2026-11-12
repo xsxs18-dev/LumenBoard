@@ -47,11 +47,14 @@ static inline NSString *LMJailbreakPath(NSString *path) {
 #define LMNotifyApply "com.xsxs18.lumenboard/apply"
 #define LMNotifyClearCache "com.xsxs18.lumenboard/clear-cache"
 #define LMNotifyMapChanged "com.xsxs18.lumenboard/map-changed"
+#define LMNotifyInteractionChanged "com.xsxs18.lumenboard/interaction-changed"
 // state = (done << 32) | total, done == UINT32_MAX when SpringBoard is about to respring
 #define LMNotifyProgress "com.xsxs18.lumenboard/progress"
 
 // Config.plist
 #define LMConfigEnabledThemes @"EnabledThemes" // theme folder names, first one wins
+#define LMConfigIconOverrides @"IconOverrides" // lowercased bundle id -> theme folder, or empty string for stock icon
+#define LMConfigDoubleTapEnabled @"DoubleTapEnabled" // opt-in; OFF means no app-launch delay
 #define LMConfigUseSystemIconShape @"UseSystemIconShape" // before 1.1.0, IconShape replaces it
 #define LMConfigIconShape @"IconShape" // one of LMIconShape*
 #define LMConfigIconEffects @"IconEffects" // underlays/overlays from themes (AnemoneEffects), on when missing

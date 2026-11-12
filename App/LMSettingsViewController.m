@@ -6,6 +6,7 @@
 
 typedef NS_ENUM(NSInteger, LMSettingsSection) {
   LMSettingsSectionIcons,
+  LMSettingsSectionHomeScreen,
   LMSettingsSectionIconCache,
   LMSettingsSectionTroubleshooting,
   LMSettingsSectionAbout,
@@ -61,12 +62,13 @@ static BOOL LMUseCheckmarksForToggles(void) {
   cell.accessoryView = toggle;
 }
 
-- (void)save {
+- (BOOL)save {
   NSError *error;
-  if ([[LMConfigStore sharedStore] save:&error]) return;
+  if ([[LMConfigStore sharedStore] save:&error]) return YES;
   UIAlertController *alert = [UIAlertController alertControllerWithTitle:LMLocalized(@"Couldn't save") message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
   [alert addAction:[UIAlertAction actionWithTitle:LMLocalized(@"OK") style:UIAlertActionStyleCancel handler:nil]];
   [self presentViewController:alert animated:YES completion:nil];
+  return NO;
 }
 
 - (void)setIconEffects:(BOOL)on {
@@ -79,12 +81,24 @@ static BOOL LMUseCheckmarksForToggles(void) {
   [self save];
 }
 
+- (void)setDoubleTapEnabled:(BOOL)on {
+  LMConfigStore *config = [LMConfigStore sharedStore];
+  BOOL before = config.doubleTapEnabled;
+  config.doubleTapEnabled = on;
+  if (![self save]) config.doubleTapEnabled = before;
+}
+
 - (void)iconEffectsChanged:(UISwitch *)toggle {
   [self setIconEffects:toggle.on];
 }
 
 - (void)keepAppearanceChanged:(UISwitch *)toggle {
   [self setKeepAppearance:toggle.on];
+}
+
+- (void)doubleTapChanged:(UISwitch *)toggle {
+  [self setDoubleTapEnabled:toggle.on];
+  [self.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:0 inSection:LMSettingsSectionHomeScreen]] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 - (void)confirmClearIconCache {
@@ -106,6 +120,7 @@ static BOOL LMUseCheckmarksForToggles(void) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
   switch (section) {
     case LMSettingsSectionIcons: return LMIconsRowCount;
+    case LMSettingsSectionHomeScreen: return 1;
     case LMSettingsSectionIconCache: return 1;
     case LMSettingsSectionTroubleshooting: return 1;
     case LMSettingsSectionAbout: return 2;
@@ -116,6 +131,7 @@ static BOOL LMUseCheckmarksForToggles(void) {
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
   switch (section) {
     case LMSettingsSectionIcons: return LMLocalized(@"Icons");
+    case LMSettingsSectionHomeScreen: return LMLocalized(@"Home Screen");
     case LMSettingsSectionIconCache: return LMLocalized(@"Icon cache");
     case LMSettingsSectionTroubleshooting: return LMLocalized(@"Troubleshooting");
     case LMSettingsSectionAbout: return LMLocalized(@"About");
@@ -126,6 +142,7 @@ static BOOL LMUseCheckmarksForToggles(void) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
   switch (section) {
     case LMSettingsSectionIcons: return LMLocalized(@"Icon effects are the underlays and overlays some themes bring along (Anemone effects). Shape and effects are drawn into every app icon. Tap Apply afterwards.");
+    case LMSettingsSectionHomeScreen: return LMLocalized(@"When off, apps open immediately. When on, double tap an app icon to choose its theme icon. This setting takes effect immediately.");
     case LMSettingsSectionIconCache: return LMLocalized(@"Renders every app icon again. Use it if icons still look wrong after installing or updating themes.");
     case LMSettingsSectionTroubleshooting: return LMLocalized(@"Shows what LumenBoard did in SpringBoard and iconservicesagent. Copy the report if your icons don't change.");
   }
@@ -153,6 +170,10 @@ static BOOL LMUseCheckmarksForToggles(void) {
     content.text = LMLocalized(@"Keep in dark & tinted mode");
     content.image = [UIImage systemImageNamed:@"circle.lefthalf.filled"];
     [self setToggleInCell:cell value:config.keepIconsInDarkAndTinted action:@selector(keepAppearanceChanged:)];
+  } else if (indexPath.section == LMSettingsSectionHomeScreen) {
+    content.text = LMLocalized(@"Double tap to change icon");
+    content.image = [UIImage systemImageNamed:@"hand.tap"];
+    [self setToggleInCell:cell value:config.doubleTapEnabled action:@selector(doubleTapChanged:)];
   } else if (indexPath.section == LMSettingsSectionIconCache) {
     content.text = LMLocalized(@"Clear icon cache & respring");
     content.textProperties.color = self.view.tintColor;
@@ -195,6 +216,10 @@ static BOOL LMUseCheckmarksForToggles(void) {
         [self setKeepAppearance:!config.keepIconsInDarkAndTinted];
         break;
     }
+    [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+  } else if (indexPath.section == LMSettingsSectionHomeScreen) {
+    if (!LMUseCheckmarksForToggles()) return;
+    [self setDoubleTapEnabled:!config.doubleTapEnabled];
     [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
   } else if (indexPath.section == LMSettingsSectionIconCache) {
     [self confirmClearIconCache];

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0
+- Added an optional Home Screen double tap to choose an individual app icon from an installed theme
+- Added a setting to turn double tap on or off immediately; it is off by default so apps open without a delay
+- Per-app choices include the original icon and the active theme order
+
+## 1.1.1~beta3
+- Shortened the wait before a normal app launch to 0.18 seconds while keeping the double-tap icon picker
+
+## 1.1.1~beta2
+- Fixed double tapping an app icon opening the app before the icon picker appears
+
+## 1.1.1~beta1
+- Double tap a Home Screen app icon to choose an icon from any installed theme
+- Choose the original app icon or return to the active theme order for individual apps
+- Icon choices are saved per app and applied after a respring
+
 ## 1.1.0
 - Icon shapes: circle, rounded square, square, teardrop, or the icon mask of your theme. They change every app icon, also apps your themes have no icon for (Settings → Icon shape)
 - Icon effects: underlays and overlays from themes that have them (Anemone effects in `AnemoneEffects`), drawn into every app icon

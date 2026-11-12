@@ -52,3 +52,9 @@
 "\"Theme's own shape\" and \"iOS shape\" only change theme icons. The other shapes change every app icon, also apps your themes have no icon for. Tap Apply afterwards." = "“主题自带形状”和“iOS 形状”只会改变主题图标。其他形状会改变每个应用图标，包括主题中没有图标的应用。之后请点按“应用”。";
 "\"Theme mask\" uses the icon mask of your active themes." = "“主题遮罩”使用已启用主题中的图标遮罩。";
 "None of your active themes has an icon mask, \"Theme mask\" works like \"Theme's own shape\"." = "已启用的主题都没有图标遮罩，“主题遮罩”的效果与“主题自带形状”相同。";
+"Choose an icon for this app" = "为此应用选择图标";
+"Use theme order" = "使用主题顺序";
+"Original icon" = "原始图标";
+"Home Screen" = "主屏幕";
+"Double tap to change icon" = "双击更改图标";
+"When off, apps open immediately. When on, double tap an app icon to choose its theme icon. This setting takes effect immediately." = "关闭后，应用会立即打开。开启后，双击应用图标即可选择主题图标。此设置立即生效。";

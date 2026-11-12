@@ -52,3 +52,9 @@
 "\"Theme's own shape\" and \"iOS shape\" only change theme icons. The other shapes change every app icon, also apps your themes have no icon for. Tap Apply afterwards." = "„Form vom Theme“ und „iOS-Form“ ändern nur Theme-Icons. Die anderen Formen ändern jedes App-Icon, auch von Apps, für die deine Themes kein Icon haben. Tippe danach auf „Anwenden“.";
 "\"Theme mask\" uses the icon mask of your active themes." = "„Theme-Maske“ nutzt die Icon-Maske deiner aktiven Themes.";
 "None of your active themes has an icon mask, \"Theme mask\" works like \"Theme's own shape\"." = "Keins deiner aktiven Themes hat eine Icon-Maske, „Theme-Maske“ verhält sich wie „Form vom Theme“.";
+"Choose an icon for this app" = "Wähle ein Icon für diese App";
+"Use theme order" = "Theme-Reihenfolge verwenden";
+"Original icon" = "Original-Icon";
+"Home Screen" = "Home-Bildschirm";
+"Double tap to change icon" = "Doppeltipp zum Ändern des Icons";
+"When off, apps open immediately. When on, double tap an app icon to choose its theme icon. This setting takes effect immediately." = "Wenn aus, öffnen sich Apps sofort. Wenn an, wähle das Theme-Icon einer App per Doppeltipp. Diese Einstellung wirkt sofort.";

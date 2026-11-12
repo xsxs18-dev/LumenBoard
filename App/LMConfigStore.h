@@ -13,6 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 // underlays/overlays from the active themes
 @property (nonatomic) BOOL iconEffects;
 @property (nonatomic) BOOL keepIconsInDarkAndTinted;
+// Takes effect immediately, without Apply or a respring.
+@property (nonatomic) BOOL doubleTapEnabled;
 // changed since the last apply
 @property (nonatomic, readonly) BOOL hasUnappliedChanges;
 
