@@ -52,6 +52,7 @@ static inline NSString *LMJailbreakPath(NSString *path) {
 
 // Config.plist
 #define LMConfigEnabledThemes @"EnabledThemes" // theme folder names, first one wins
+#define LMConfigIconOverrides @"IconOverrides" // lowercased bundle id -> theme folder, or empty string for stock icon
 #define LMConfigUseSystemIconShape @"UseSystemIconShape" // before 1.1.0, IconShape replaces it
 #define LMConfigIconShape @"IconShape" // one of LMIconShape*
 #define LMConfigIconEffects @"IconEffects" // underlays/overlays from themes (AnemoneEffects), on when missing

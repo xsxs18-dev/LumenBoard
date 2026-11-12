@@ -44,6 +44,10 @@
 - (void)setShouldApplyMask:(BOOL)shouldApplyMask;
 @end
 
+@interface SBIconView : UIView
+- (id)icon;
+@end
+
 #pragma mark - Helpers
 
 static void LMRun(NSString *tool, NSArray<NSString *> *arguments) {
@@ -91,6 +95,17 @@ static void LMReloadStoreInThisProcess(void) {
 
 static NSArray<LSApplicationProxy *> *LMInstalledApps(void) {
   return [[objc_getClass("LSApplicationWorkspace") defaultWorkspace] allInstalledApplications] ? : @[];
+}
+
+static NSString *LMAppNameForBundleID(NSString *bundleID, NSArray<LSApplicationProxy *> *apps) {
+  for (LSApplicationProxy *app in apps)
+    if ([app.applicationIdentifier caseInsensitiveCompare:bundleID] == NSOrderedSame) return app.localizedName.lowercaseString;
+  return nil;
+}
+
+static NSDictionary *LMIconForThemeAndApp(NSString *theme, NSString *bundleID, NSString *appName) {
+  NSDictionary *icon = [LMThemeLibrary iconsInTheme:theme][bundleID.lowercaseString];
+  return icon ? : (appName.length ? [LMThemeLibrary iconsByAppNameInTheme:theme][appName] : nil);
 }
 
 // app name -> bundle ids, for Icons/<App Name>.png
@@ -244,6 +259,7 @@ static void LMRemoveUnusedComposedIcons(NSDictionary *entries) {
 static BOOL LMWriteIconMap(BOOL composeIcons, NSMutableDictionary *status) {
   NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:LMConfigPath] ? : @{};
   NSArray *themes = [config[LMConfigEnabledThemes] isKindOfClass:[NSArray class]] ? config[LMConfigEnabledThemes] : @[];
+  NSDictionary *overrides = [config[LMConfigIconOverrides] isKindOfClass:[NSDictionary class]] ? config[LMConfigIconOverrides] : @{};
   NSString *shape = LMIconShapeFromConfig(config);
   BOOL iconEffects = LMIconEffectsFromConfig(config);
   BOOL keepAppearance = [config[LMConfigKeepIconsInDarkAndTinted] boolValue];
@@ -253,8 +269,19 @@ static BOOL LMWriteIconMap(BOOL composeIcons, NSMutableDictionary *status) {
   BOOL usesAppNames = NO;
   for (NSString *theme in themes) usesAppNames = usesAppNames || ([theme isKindOfClass:[NSString class]] && [LMThemeLibrary iconsByAppNameInTheme:theme].count);
   NSMutableDictionary *icons = [[LMThemeLibrary resolvedIconsForThemes:themes appNames:(usesAppNames ? LMInstalledAppNames(apps) : nil)] mutableCopy];
+  [overrides enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+    if (![key isKindOfClass:[NSString class]] || ![value isKindOfClass:[NSString class]]) return;
+    NSString *bundleID = [key lowercaseString];
+    if (!bundleID.length) return;
+    if (![value length]) {
+      [icons removeObjectForKey:bundleID];
+      return;
+    }
+    NSDictionary *icon = LMIconForThemeAndApp(value, bundleID, LMAppNameForBundleID(bundleID, apps));
+    if (icon) icons[bundleID] = icon;
+  }];
 
-  NSDictionary *appliedConfig = @{ LMConfigEnabledThemes : themes, LMConfigIconShape : shape, LMConfigIconEffects : @(iconEffects), LMConfigKeepIconsInDarkAndTinted : @(keepAppearance) };
+  NSDictionary *appliedConfig = @{ LMConfigEnabledThemes : themes, LMConfigIconOverrides : overrides, LMConfigIconShape : shape, LMConfigIconEffects : @(iconEffects), LMConfigKeepIconsInDarkAndTinted : @(keepAppearance) };
 
   LMIconComposer *composer = [[LMIconComposer alloc] initWithShape:shape maskPath:[LMThemeLibrary iconMaskInThemes:themes]
                                                             effects:(iconEffects ? [LMThemeLibrary effectsInThemes:themes] : @{})];
@@ -271,6 +298,9 @@ static BOOL LMWriteIconMap(BOOL composeIcons, NSMutableDictionary *status) {
   NSString *style = [NSString stringWithFormat:@"v%d shape=%@ keep=%d effects=%d", LMMapVersion, composer.shape, keepAppearance, composer.changesIcons];
   NSMutableDictionary *entries = [NSMutableDictionary new], *materials = [NSMutableDictionary new];
   NSMutableString *content = [NSMutableString stringWithFormat:@"%@\n%@\n", style, [themes componentsJoinedByString:@"/"]];
+  for (NSString *bundleID in [overrides.allKeys sortedArrayUsingSelector:@selector(compare:)])
+    if ([bundleID isKindOfClass:[NSString class]] && [overrides[bundleID] isKindOfClass:[NSString class]])
+      [content appendFormat:@"override %@=%@\n", bundleID, overrides[bundleID]];
   for (NSString *bundleID in [icons.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
     NSDictionary *icon = icons[bundleID];
     NSMutableDictionary *entry = [NSMutableDictionary new];
@@ -466,6 +496,97 @@ static void LMApplyNotification(CFNotificationCenterRef center, void *observer, 
   BOOL clearCache = CFEqual(name, CFSTR(LMNotifyClearCache));
   dispatch_async(dispatch_get_main_queue(), ^{ LMApply(clearCache); });
 }
+
+#pragma mark - Per-app icon picker
+
+static BOOL LMSaveIconOverride(NSString *bundleID, NSString *theme) {
+  NSMutableDictionary *config = [[NSDictionary dictionaryWithContentsOfFile:LMConfigPath] mutableCopy] ? : [NSMutableDictionary new];
+  NSMutableDictionary *overrides = [config[LMConfigIconOverrides] isKindOfClass:[NSDictionary class]] ? [config[LMConfigIconOverrides] mutableCopy] : [NSMutableDictionary new];
+  if (theme) overrides[bundleID] = theme; // empty string selects the original app icon
+  else [overrides removeObjectForKey:bundleID]; // follow the active theme order again
+  config[LMConfigIconOverrides] = overrides;
+  [[NSFileManager defaultManager] createDirectoryAtPath:LMDataDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+  NSData *data = [NSPropertyListSerialization dataWithPropertyList:config format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+  BOOL saved = [data writeToFile:LMConfigPath options:NSDataWritingAtomic error:nil];
+  if (saved) {
+    chmod(LMConfigPath.fileSystemRepresentation, 0644);
+    notify_post(LMNotifyApply);
+  }
+  return saved;
+}
+
+static NSString *LMIconPickerText(NSString *key) {
+  static NSBundle *bundle;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ bundle = [NSBundle bundleWithPath:LMRootPath(@"/Applications/LumenBoard.app")]; });
+  return [bundle localizedStringForKey:key value:key table:nil];
+}
+
+@interface LMIconTapHandler : NSObject
+- (void)showPicker:(UITapGestureRecognizer *)gesture;
+@end
+
+@implementation LMIconTapHandler
+
+- (void)showPicker:(UITapGestureRecognizer *)gesture {
+  if (gesture.state != UIGestureRecognizerStateRecognized) return;
+  SBIconView *view = (SBIconView *)gesture.view;
+  id icon = [view respondsToSelector:@selector(icon)] ? view.icon : nil;
+  SEL identifierSelector = @selector(applicationBundleID);
+  if (![icon respondsToSelector:identifierSelector]) identifierSelector = @selector(bundleIdentifier);
+  if (![icon respondsToSelector:identifierSelector]) return; // folders and widgets
+  NSString *bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, identifierSelector);
+  if (![bundleID isKindOfClass:[NSString class]] || !bundleID.length) return;
+  bundleID = bundleID.lowercaseString;
+
+  NSArray *apps = LMInstalledApps();
+  NSString *appName = LMAppNameForBundleID(bundleID, apps);
+  NSMutableArray<NSString *> *available = [NSMutableArray new];
+  [LMThemeLibrary invalidate];
+  for (NSString *theme in [LMThemeLibrary installedThemes])
+    if (LMIconForThemeAndApp(theme, bundleID, appName)) [available addObject:theme];
+
+  NSString *title = appName.length ? appName : bundleID;
+  UIAlertController *picker = [UIAlertController alertControllerWithTitle:title message:LMIconPickerText(@"Choose an icon for this app") preferredStyle:UIAlertControllerStyleActionSheet];
+  void (^choose)(NSString *) = ^(NSString *theme) {
+    if (!LMSaveIconOverride(bundleID, theme)) NSLog(@"[LumenBoard] couldn't save icon choice for %@", bundleID);
+  };
+  [picker addAction:[UIAlertAction actionWithTitle:LMIconPickerText(@"Use theme order") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { choose(nil); }]];
+  [picker addAction:[UIAlertAction actionWithTitle:LMIconPickerText(@"Original icon") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { choose(@""); }]];
+  for (NSString *theme in available) {
+    [picker addAction:[UIAlertAction actionWithTitle:[LMThemeLibrary displayNameForTheme:theme] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { choose(theme); }]];
+  }
+  [picker addAction:[UIAlertAction actionWithTitle:LMIconPickerText(@"Cancel") style:UIAlertActionStyleCancel handler:nil]];
+  picker.popoverPresentationController.sourceView = view;
+  picker.popoverPresentationController.sourceRect = view.bounds;
+  UIViewController *presenter = view.window.rootViewController;
+  while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+  [presenter presentViewController:picker animated:YES completion:nil];
+}
+
+@end
+
+static char LMDoubleTapKey;
+static LMIconTapHandler *LMSharedTapHandler(void) {
+  static LMIconTapHandler *handler;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ handler = [LMIconTapHandler new]; });
+  return handler;
+}
+
+%hook SBIconView
+
+- (void)didMoveToWindow {
+  %orig;
+  if (!self.window || objc_getAssociatedObject(self, &LMDoubleTapKey)) return;
+  UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:LMSharedTapHandler() action:@selector(showPicker:)];
+  doubleTap.numberOfTapsRequired = 2;
+  doubleTap.delaysTouchesEnded = YES;
+  [self addGestureRecognizer:doubleTap];
+  objc_setAssociatedObject(self, &LMDoubleTapKey, doubleTap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+%end
 
 %ctor {
   @autoreleasepool {

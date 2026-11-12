@@ -73,3 +73,16 @@ jobs:
           else
             gh release create "$tag" packages/*.deb --title "$NAME $VERSION" --notes "$notes" --latest
           fi
+
+      - name: Publish beta release
+        if: startsWith(github.ref, 'refs/heads/beta/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag="v${VERSION/\~/-}"
+          changes=$(awk -v version="$VERSION" '/^## /{ found = ($2 == version); next } found' CHANGELOG.md | sed '/^$/d')
+          notes=$(printf '%s\n\nRootless (Dopamine, palera1n): %s\nRootHide (Relaxin, Bootstrap, Dopamine-roothide): %s\n\nBeta build %s' \
+            "$changes" "$(cd packages && ls *_iphoneos-arm64.deb)" "$(cd packages && ls *_iphoneos-arm64e.deb)" "${GITHUB_SHA::7}")
+          gh release create "$tag" packages/*.deb --target "$GITHUB_SHA" \
+            --title "LumenBoard ${VERSION/\~/-}" --notes "$notes" --prerelease --latest=false

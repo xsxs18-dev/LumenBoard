@@ -32,8 +32,10 @@
 
 - (NSDictionary *)normalizedConfig:(NSDictionary *)config {
   NSArray *themes = [config[LMConfigEnabledThemes] isKindOfClass:[NSArray class]] ? config[LMConfigEnabledThemes] : @[];
+  NSDictionary *overrides = [config[LMConfigIconOverrides] isKindOfClass:[NSDictionary class]] ? config[LMConfigIconOverrides] : @{};
   return @{
     LMConfigEnabledThemes : themes,
+    LMConfigIconOverrides : overrides,
     LMConfigIconShape : LMIconShapeFromConfig(config),
     LMConfigIconEffects : @(LMIconEffectsFromConfig(config)),
     LMConfigKeepIconsInDarkAndTinted : @([config[LMConfigKeepIconsInDarkAndTinted] boolValue])
@@ -41,8 +43,12 @@
 }
 
 - (NSDictionary *)dictionaryRepresentation {
+  // SpringBoard writes per-icon choices. Preserve them when this app saves other settings.
+  NSDictionary *disk = [NSDictionary dictionaryWithContentsOfFile:LMConfigPath] ? : @{};
+  NSDictionary *overrides = [disk[LMConfigIconOverrides] isKindOfClass:[NSDictionary class]] ? disk[LMConfigIconOverrides] : @{};
   return @{
     LMConfigEnabledThemes : _enabledThemes ? : @[],
+    LMConfigIconOverrides : overrides,
     LMConfigIconShape : _iconShape ? : LMIconShapeTheme,
     LMConfigIconEffects : @(_iconEffects),
     LMConfigKeepIconsInDarkAndTinted : @(_keepIconsInDarkAndTinted)

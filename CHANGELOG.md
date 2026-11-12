@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1~beta1
+- Double tap a Home Screen app icon to choose an icon from any installed theme
+- Choose the original app icon or return to the active theme order for individual apps
+- Icon choices are saved per app and applied after a respring
+
 ## 1.1.0
 - Icon shapes: circle, rounded square, square, teardrop, or the icon mask of your theme. They change every app icon, also apps your themes have no icon for (Settings → Icon shape)
 - Icon effects: underlays and overlays from themes that have them (Anemone effects in `AnemoneEffects`), drawn into every app icon
