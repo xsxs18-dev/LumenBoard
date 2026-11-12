@@ -11,6 +11,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <CommonCrypto/CommonDigest.h>
+#include <math.h>
 
 @interface LSApplicationProxy : NSObject
 - (NSString *)applicationIdentifier;
@@ -522,13 +523,77 @@ static NSString *LMIconPickerText(NSString *key) {
   return [bundle localizedStringForKey:key value:key table:nil];
 }
 
+// A short second-tap window keeps ordinary app launches responsive. SpringBoard's
+// single-tap recognizer waits for this recognizer to fail before opening the app.
+@interface LMFastDoubleTapRecognizer : UIGestureRecognizer
+@end
+
+@implementation LMFastDoubleTapRecognizer {
+  NSTimer *_timeout;
+  NSUInteger _completedTaps;
+  CGPoint _touchStart;
+  NSTimeInterval _touchStartTime;
+}
+
+- (void)reset {
+  [_timeout invalidate];
+  _timeout = nil;
+  _completedTaps = 0;
+  [super reset];
+}
+
+- (void)secondTapTimedOut:(NSTimer *)timer {
+  if (self.state == UIGestureRecognizerStatePossible) self.state = UIGestureRecognizerStateFailed;
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+  if (touches.count != 1 || event.allTouches.count != 1) {
+    self.state = UIGestureRecognizerStateFailed;
+    return;
+  }
+  if (_completedTaps) {
+    [_timeout invalidate];
+    _timeout = nil;
+  }
+  UITouch *touch = touches.anyObject;
+  _touchStart = [touch locationInView:self.view];
+  _touchStartTime = touch.timestamp;
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+  CGPoint location = [touches.anyObject locationInView:self.view];
+  if (hypot(location.x - _touchStart.x, location.y - _touchStart.y) > 12)
+    self.state = UIGestureRecognizerStateFailed;
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+  UITouch *touch = touches.anyObject;
+  if (touch.timestamp - _touchStartTime > 0.25) {
+    self.state = UIGestureRecognizerStateFailed;
+    return;
+  }
+  if (_completedTaps) {
+    self.state = UIGestureRecognizerStateRecognized;
+    return;
+  }
+  _completedTaps = 1;
+  _timeout = [NSTimer timerWithTimeInterval:0.18 target:self selector:@selector(secondTapTimedOut:) userInfo:nil repeats:NO];
+  [[NSRunLoop mainRunLoop] addTimer:_timeout forMode:NSRunLoopCommonModes];
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+  self.state = UIGestureRecognizerStateFailed;
+}
+
+@end
+
 @interface LMIconTapHandler : NSObject
-- (void)showPicker:(UITapGestureRecognizer *)gesture;
+- (void)showPicker:(UIGestureRecognizer *)gesture;
 @end
 
 @implementation LMIconTapHandler
 
-- (void)showPicker:(UITapGestureRecognizer *)gesture {
+- (void)showPicker:(UIGestureRecognizer *)gesture {
   if (gesture.state != UIGestureRecognizerStateRecognized) return;
   SBIconView *view = (SBIconView *)gesture.view;
   id icon = [view respondsToSelector:@selector(icon)] ? view.icon : nil;
@@ -579,14 +644,13 @@ static LMIconTapHandler *LMSharedTapHandler(void) {
 - (void)didMoveToWindow {
   %orig;
   if (!self.window || objc_getAssociatedObject(self, &LMDoubleTapKey)) return;
-  UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:LMSharedTapHandler() action:@selector(showPicker:)];
-  doubleTap.numberOfTapsRequired = 2;
+  LMFastDoubleTapRecognizer *doubleTap = [[LMFastDoubleTapRecognizer alloc] initWithTarget:LMSharedTapHandler() action:@selector(showPicker:)];
   [self addGestureRecognizer:doubleTap];
   // SpringBoard opens the app through its own tap recognizer. Make it wait until
   // the double tap has failed; delaying touch delivery alone does not stop it.
   SEL tapSelector = @selector(tapGestureRecognizer);
   UITapGestureRecognizer *launchTap = [self respondsToSelector:tapSelector] ? ((id (*)(id, SEL))objc_msgSend)(self, tapSelector) : nil;
-  if (launchTap && launchTap != doubleTap) [launchTap requireGestureRecognizerToFail:doubleTap];
+  if (launchTap) [launchTap requireGestureRecognizerToFail:doubleTap];
   else for (UIGestureRecognizer *recognizer in self.gestureRecognizers)
     if (recognizer != doubleTap && [recognizer isKindOfClass:[UITapGestureRecognizer class]] &&
         [(UITapGestureRecognizer *)recognizer numberOfTapsRequired] == 1)

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.1~beta3
+- Shortened the wait before a normal app launch to 0.18 seconds while keeping the double-tap icon picker
+
 ## 1.1.1~beta2
 - Fixed double tapping an app icon opening the app before the icon picker appears
 
