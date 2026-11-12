@@ -85,4 +85,4 @@ jobs:
           notes=$(printf '%s\n\nRootless (Dopamine, palera1n): %s\nRootHide (Relaxin, Bootstrap, Dopamine-roothide): %s\n\nBeta build %s' \
             "$changes" "$(cd packages && ls *_iphoneos-arm64.deb)" "$(cd packages && ls *_iphoneos-arm64e.deb)" "${GITHUB_SHA::7}")
           gh release create "$tag" packages/*.deb --target "$GITHUB_SHA" \
-            --title "LumenBoard ${VERSION/\~/-}" --notes "$notes" --prerelease --latest=false
+            --title "LumenBoard ${VERSION/\~/-}" --notes "$notes" --draft --prerelease --latest=false

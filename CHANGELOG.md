@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.1~beta2
+- Fixed double tapping an app icon opening the app before the icon picker appears
+
 ## 1.1.1~beta1
 - Double tap a Home Screen app icon to choose an icon from any installed theme
 - Choose the original app icon or return to the active theme order for individual apps

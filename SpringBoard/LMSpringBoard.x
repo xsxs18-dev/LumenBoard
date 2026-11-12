@@ -581,8 +581,16 @@ static LMIconTapHandler *LMSharedTapHandler(void) {
   if (!self.window || objc_getAssociatedObject(self, &LMDoubleTapKey)) return;
   UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:LMSharedTapHandler() action:@selector(showPicker:)];
   doubleTap.numberOfTapsRequired = 2;
-  doubleTap.delaysTouchesEnded = YES;
   [self addGestureRecognizer:doubleTap];
+  // SpringBoard opens the app through its own tap recognizer. Make it wait until
+  // the double tap has failed; delaying touch delivery alone does not stop it.
+  SEL tapSelector = @selector(tapGestureRecognizer);
+  UITapGestureRecognizer *launchTap = [self respondsToSelector:tapSelector] ? ((id (*)(id, SEL))objc_msgSend)(self, tapSelector) : nil;
+  if (launchTap && launchTap != doubleTap) [launchTap requireGestureRecognizerToFail:doubleTap];
+  else for (UIGestureRecognizer *recognizer in self.gestureRecognizers)
+    if (recognizer != doubleTap && [recognizer isKindOfClass:[UITapGestureRecognizer class]] &&
+        [(UITapGestureRecognizer *)recognizer numberOfTapsRequired] == 1)
+      [recognizer requireGestureRecognizerToFail:doubleTap];
   objc_setAssociatedObject(self, &LMDoubleTapKey, doubleTap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
