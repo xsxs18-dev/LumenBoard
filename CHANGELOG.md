@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1
+- Fixed a crash when opening the icon shape settings on some devices (#5)
+
 ## 1.2.0
 - Added an optional Home Screen double tap to choose an individual app icon from an installed theme
 - Added a setting to turn double tap on or off immediately; it is off by default so apps open without a delay
